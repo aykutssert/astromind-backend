@@ -1,0 +1,5 @@
+venv/
+.env
+debug_logs/
+serviceAccountKey.json
+__pycache__/
