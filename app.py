@@ -292,7 +292,9 @@ def geocode_city(city_name: str) -> tuple:
     params  = {"q": city_name, "format": "json", "limit": 1}
     headers = {"User-Agent": "AstraBirthChartApp/1.0"}
 
-    response = requests.get(url, params=params, headers=headers, timeout=5)
+    import time
+    time.sleep(1)  # Nominatim rate limit: 1 req/sec
+    response = requests.get(url, params=params, headers=headers, timeout=10)
     response.raise_for_status()
 
     results = response.json()
