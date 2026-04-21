@@ -127,10 +127,43 @@ def require_auth(f):
         return f(*args, **kwargs)
     return decorated_function
 
-ZODIAC_SIGNS = [
-    "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
-    "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
-]
+# ─────────────────────────────────────────────
+# UI Metadata (Symbols, Elements, Colors)
+# ─────────────────────────────────────────────
+
+ZODIAC_METADATA = {
+    "Aries":       {"symbol": "♈", "element": "Fire",  "quality": "Cardinal"},
+    "Taurus":      {"symbol": "♉", "element": "Earth", "quality": "Fixed"},
+    "Gemini":      {"symbol": "♊", "element": "Air",   "quality": "Mutable"},
+    "Cancer":      {"symbol": "♋", "element": "Water", "quality": "Cardinal"},
+    "Leo":         {"symbol": "♌", "element": "Fire",  "quality": "Fixed"},
+    "Virgo":       {"symbol": "♍", "element": "Earth", "quality": "Mutable"},
+    "Libra":       {"symbol": "♎", "element": "Air",   "quality": "Cardinal"},
+    "Scorpio":     {"symbol": "♏", "element": "Water", "quality": "Fixed"},
+    "Sagittarius": {"symbol": "♐", "element": "Fire",  "quality": "Mutable"},
+    "Capricorn":   {"symbol": "♑", "element": "Earth", "quality": "Cardinal"},
+    "Aquarius":    {"symbol": "♒", "element": "Air",   "quality": "Fixed"},
+    "Pisces":      {"symbol": "♓", "element": "Water", "quality": "Mutable"}
+}
+
+PLANET_METADATA = {
+    "Sun":        {"symbol": "☉", "color": "#FFCC00"}, # Gold
+    "Moon":       {"symbol": "☽", "color": "#E6E6FA"}, # Lavender
+    "Mercury":    {"symbol": "☿", "color": "#FFEB3B"}, # Yellow
+    "Venus":      {"symbol": "♀", "color": "#4CAF50"}, # Emerald
+    "Mars":       {"symbol": "♂", "color": "#F44336"}, # Red
+    "Jupiter":    {"symbol": "♃", "color": "#9C27B0"}, # Purple
+    "Saturn":     {"symbol": "♄", "color": "#455A64"}, # Dark Gray
+    "Uranus":     {"symbol": "♅", "color": "#00BCD4"}, # Electric Blue
+    "Neptune":    {"symbol": "♆", "color": "#3F51B5"}, # Indigo/Deep Blue
+    "Pluto":      {"symbol": "♇", "color": "#880E4F"}, # Burgundy
+    "True Node":  {"symbol": "☊", "color": "#FF9800"}, 
+    "Lilith":     {"symbol": "⚸", "color": "#000000"},
+    "Chiron":     {"symbol": "⚷", "color": "#795548"},
+    "Ceres":      {"symbol": "⚳", "color": "#A5D6A7"}
+}
+
+ZODIAC_SIGNS = list(ZODIAC_METADATA.keys())
 
 HOUSE_NAMES = [
     "1st House", "2nd House", "3rd House", "4th House",
@@ -264,6 +297,46 @@ def geocode_city(city_name: str) -> tuple:
 # ─────────────────────────────────────────────
 # Planetary Calculations
 # ─────────────────────────────────────────────
+
+def calculate_elements_and_vibe(natal_planets, transit_aspects):
+    """Calculates element balance and chooses a dominant color/vibe."""
+    scores = {"Fire": 0, "Earth": 0, "Air": 0, "Water": 0}
+    weights = {
+        "Sun": 4, "Moon": 4, "Ascendant": 4, 
+        "Mars": 2, "Venus": 2, "Mercury": 2, 
+        "Jupiter": 1, "Saturn": 1, "Uranus": 1, "Neptune": 1, "Pluto": 1
+    }
+
+    # 1. Element Balance
+    for p_name, p_data in natal_planets.items():
+        if p_name in weights:
+            # Get sign from name string (e.g. "Aries")
+            sign_name = p_data["sign"]
+            elem = ZODIAC_METADATA[sign_name]["element"]
+            scores[elem] += weights[p_name]
+    
+    total = sum(scores.values())
+    balance = {k: round((v / total) * 100) if total > 0 else 0 for k, v in scores.items()}
+
+    # 2. Vibe Color (Dominant Planet Based on tightest Transit)
+    dominant_planet = "Sun"
+    if transit_aspects:
+        sorted_aspects = sorted(transit_aspects, key=lambda x: x["orb"])
+        dominant_planet = sorted_aspects[0]["transit_planet"]
+
+    vibe_color = PLANET_METADATA.get(dominant_planet, PLANET_METADATA["Sun"])["color"]
+
+    return balance, vibe_color, dominant_planet
+
+
+def get_full_zodiac(deg):
+    """Returns sign_name, deg_in_sign, and absolute_deg (0-360)."""
+    deg = deg % 360
+    sign_idx = int(deg // 30)
+    sign_name = ZODIAC_SIGNS[sign_idx]
+    deg_in_sign = deg % 30
+    return sign_name, deg_in_sign, deg
+
 
 def calculate_planetary_positions(julian_day: float) -> dict:
     """Ecliptic positions for all 14 bodies."""
