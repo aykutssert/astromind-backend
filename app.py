@@ -78,6 +78,7 @@ try:
     service_account_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
     
     if service_account_json:
+        service_account_json = service_account_json.replace('\\n', '\n')
         service_account_info = json.loads(service_account_json)
         cred = credentials.Certificate(service_account_info)
         firebase_admin.initialize_app(cred)
