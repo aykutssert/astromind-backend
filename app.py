@@ -75,10 +75,18 @@ Example: "Focus on your own path."
 db = None
 try:
     # 1. Try to load from Environment Variable (for Railway/Production)
+    import base64
+    service_account_b64 = os.environ.get("FIREBASE_SERVICE_ACCOUNT_B64")
     service_account_json = os.environ.get("FIREBASE_SERVICE_ACCOUNT")
-    
-    if service_account_json:
-        service_account_json = service_account_json.replace('\\n', '\n')
+
+    if service_account_b64:
+        decoded = base64.b64decode(service_account_b64).decode('utf-8')
+        service_account_info = json.loads(decoded)
+        cred = credentials.Certificate(service_account_info)
+        firebase_admin.initialize_app(cred)
+        db = firestore.client()
+        print("✓ Firebase Admin & Firestore initialized from ENVIRONMENT VARIABLE (base64).")
+    elif service_account_json:
         service_account_info = json.loads(service_account_json)
         cred = credentials.Certificate(service_account_info)
         firebase_admin.initialize_app(cred)
