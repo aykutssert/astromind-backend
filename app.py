@@ -285,22 +285,37 @@ def local_to_utc_hour(year: int, month: int, day: int,
 
 def geocode_city(city_name: str) -> tuple:
     """
-    Resolve city name → (lat, lng, resolved_name) via Nominatim.
-    Free, no API key. Rate limit: 1 req/sec — fine for this use case.
+    Resolve city name → (lat, lng, resolved_name).
+    Photon'u dener, başarısız olursa Nominatim'e düşer.
     """
+    # 1. Photon (Komoot) — Nominatim tabanlı, ayrı sunucu
+    try:
+        url = "https://photon.komoot.io/api/"
+        params = {"q": city_name, "limit": 1}
+        response = requests.get(url, params=params, timeout=10)
+        response.raise_for_status()
+        features = response.json().get("features", [])
+        if features:
+            coords = features[0]["geometry"]["coordinates"]
+            props  = features[0].get("properties", {})
+            name   = props.get("city") or props.get("name") or city_name
+            country = props.get("country", "")
+            display = f"{name}, {country}".strip(", ")
+            return float(coords[1]), float(coords[0]), display
+    except Exception:
+        pass
+
+    # 2. Fallback: Nominatim
+    import time
     url     = "https://nominatim.openstreetmap.org/search"
     params  = {"q": city_name, "format": "json", "limit": 1}
-    headers = {"User-Agent": "AstraBirthChartApp/1.0"}
-
-    import time
-    time.sleep(1)  # Nominatim rate limit: 1 req/sec
+    headers = {"User-Agent": "AstraBirthChartApp/1.0 contact@astromind.app"}
+    time.sleep(1)
     response = requests.get(url, params=params, headers=headers, timeout=10)
     response.raise_for_status()
-
     results = response.json()
     if not results:
         raise ValueError(f"City not found: '{city_name}'")
-
     top = results[0]
     return float(top["lat"]), float(top["lon"]), top.get("display_name", city_name)
 
