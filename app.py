@@ -1,6 +1,5 @@
 import os
 import json
-import requests
 from datetime import datetime, timezone
 from functools import wraps
 from flask import Flask, request, jsonify
@@ -277,47 +276,6 @@ def local_to_utc_hour(year: int, month: int, day: int,
     utc_dt   = local_dt.astimezone(pytz.utc)
 
     return utc_dt.hour + utc_dt.minute / 60.0, tz_name
-
-
-# ─────────────────────────────────────────────
-# Geocoding (Nominatim / OpenStreetMap)
-# ─────────────────────────────────────────────
-
-def geocode_city(city_name: str) -> tuple:
-    """
-    Resolve city name → (lat, lng, resolved_name).
-    Photon'u dener, başarısız olursa Nominatim'e düşer.
-    """
-    # 1. Photon (Komoot) — Nominatim tabanlı, ayrı sunucu
-    try:
-        url = "https://photon.komoot.io/api/"
-        params = {"q": city_name, "limit": 1}
-        response = requests.get(url, params=params, timeout=10)
-        response.raise_for_status()
-        features = response.json().get("features", [])
-        if features:
-            coords = features[0]["geometry"]["coordinates"]
-            props  = features[0].get("properties", {})
-            name   = props.get("city") or props.get("name") or city_name
-            country = props.get("country", "")
-            display = f"{name}, {country}".strip(", ")
-            return float(coords[1]), float(coords[0]), display
-    except Exception:
-        pass
-
-    # 2. Fallback: Nominatim
-    import time
-    url     = "https://nominatim.openstreetmap.org/search"
-    params  = {"q": city_name, "format": "json", "limit": 1}
-    headers = {"User-Agent": "AstraBirthChartApp/1.0 contact@astromind.app"}
-    time.sleep(1)
-    response = requests.get(url, params=params, headers=headers, timeout=10)
-    response.raise_for_status()
-    results = response.json()
-    if not results:
-        raise ValueError(f"City not found: '{city_name}'")
-    top = results[0]
-    return float(top["lat"]), float(top["lon"]), top.get("display_name", city_name)
 
 
 # ─────────────────────────────────────────────
@@ -601,7 +559,8 @@ def build_ai_prompt(
     solar_return:    dict,
     lunar_return:    dict,
     resolved_city:   str,
-    user_name:       str = "User"
+    user_name:       str = "User",
+    time_accuracy:   str = "known"
 ) -> str:
     cusps = natal_houses["cusps"]
 
@@ -668,9 +627,15 @@ def build_ai_prompt(
     )
     lr_text = lunar_return.get("next", "N/A")
 
+    accuracy_note = ""
+    if time_accuracy == "unknown":
+        accuracy_note = "\n[CRITICAL NOTE]: The user DOES NOT KNOW their exact birth time. The time was defaulted to 12:00 PM. Do NOT make highly specific claims based on the Ascendant, Midheaven, or exact Moon degrees, as they may be inaccurate. Focus on the core Sun sign, major planets, and general aspects.\n"
+    elif time_accuracy == "approx":
+        accuracy_note = "\n[NOTE]: The user's birth time is APPROXIMATE. Ascendant and Moon degrees might be slightly off. Avoid over-interpreting exact house cusps.\n"
+
     return f"""Today's Date: {today_str}
 User's Name: {user_name}
-Birth Location: {resolved_city}
+Birth Location: {resolved_city}{accuracy_note}
 
 ═══ NATAL CHART ═══
 {chr(10).join(natal_lines)}
@@ -843,11 +808,16 @@ def save_profile():
     name = data.get("name", "User").strip()
     year, month, day = int(data["year"]), int(data["month"]), int(data["day"])
     local_hour = float(data["hour"])
-    city = data["city"].strip()
+    city = data.get("city", "Bilinmeyen Konum").strip()
+    lat = data.get("lat")
+    lng = data.get("lng")
+
+    if lat is None or lng is None:
+        return jsonify({"status": "error", "message": "Missing lat/lng"}), 422
 
     try:
-        # Resolve coordinates & timezone once
-        lat, lng, resolved_city = geocode_city(city)
+        lat, lng = float(lat), float(lng)
+        resolved_city = city
         utc_hour, tz_name = local_to_utc_hour(year, month, day, local_hour, lat, lng)
 
         profile_data = {
@@ -861,6 +831,7 @@ def save_profile():
             "lng": lng,
             "utc_hour": round(utc_hour, 4),
             "timezone": tz_name,
+            "time_accuracy": data.get("time_accuracy", "known"),
             "updated_at": firestore.SERVER_TIMESTAMP
         }
 
@@ -898,20 +869,21 @@ def get_birth_chart():
     month      = int(data["month"])
     day        = int(data["day"])
     local_hour = float(data["hour"])
-    city       = data["city"].strip()
+    city       = data.get("city", "Bilinmeyen Konum").strip()
+    lat        = data.get("lat")
+    lng        = data.get("lng")
+
+    if lat is None or lng is None:
+        return jsonify({"status": "error", "message": "Missing lat/lng"}), 422
 
     today_str = datetime.now(timezone.utc).strftime("%B %d, %Y")
     print(f"[{today_str}] Request → {year}-{month:02d}-{day:02d} {local_hour:.2f}h local | {city}")
 
-    # ── 2. Geocoding ───────────────────────────────────────────────────
     try:
-        lat, lng, resolved_city = geocode_city(city)
-        print(f"  Geocoded: {resolved_city} → ({lat:.4f}, {lng:.4f})")
+        lat, lng = float(lat), float(lng)
+        resolved_city = city
     except ValueError as e:
-        return jsonify({"status": "error", "message": str(e)}), 422
-    except Exception as e:
-        print(f"[Geocoding Error] {e}")
-        return jsonify({"status": "error", "message": "Geocoding service unavailable."}), 502
+        return jsonify({"status": "error", "message": f"Invalid coordinates: {e}"}), 422
 
     # ── 3. Timezone → UTC ──────────────────────────────────────────────
     try:
@@ -964,11 +936,12 @@ def get_birth_chart():
 
     # ── 5. Build prompt & call Gemini ──────────────────────────────────
     user_name = data.get("name", "User")
+    time_accuracy = data.get("time_accuracy", "known")
     user_content = build_ai_prompt(
         today_str, natal_planets, natal_houses, transit_planets,
         active_aspects, par_aspects, fixed_star_conj,
         prog_planets, solar_return, lunar_return, resolved_city,
-        user_name=user_name
+        user_name=user_name, time_accuracy=time_accuracy
     )
 
     # DEBUG: Save outgoing prompt to a unique folder
