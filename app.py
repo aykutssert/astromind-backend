@@ -974,28 +974,8 @@ def get_birth_chart():
         print(f"[Gemini Error] {e}")
         return jsonify({"status": "error", "message": "AI interpretation failed."}), 502
 
-        # ── 6. Save to History (With Technical Snapshot) ──────────────────
-        try:
-            if db:
-                uid = request.user["uid"]
-                # Create a snapshot of the data for future "Ask AI" context
-                astrology_snapshot = {
-                    "natal_chart": natal_response,
-                    "transit_chart": transit_response,
-                    "aspects": active_aspects[:10]  # Only top 10 aspects for context
-                }
-
-                db.collection("users").document(uid).collection("readings").add({
-                    "timestamp": firestore.SERVER_TIMESTAMP,
-                    "interpretation": interpretation,
-                    "astrology_snapshot": astrology_snapshot
-                })
-                print(f"  ✓ Reading saved with snapshot for UID: {uid}")
-        except Exception as db_err:
-            print(f"  ⚠ Failed to save history: {db_err}")
-
-        # ── 7. Serialize response ──────────────────────────────────────────
-        cusps = natal_houses["cusps"]
+    # ── 6. Serialize response ──────────────────────────────────────────
+    cusps = natal_houses["cusps"]
 
     natal_response = {
         name: {
@@ -1029,8 +1009,30 @@ def get_birth_chart():
         if name in {"Sun", "Moon", "Mercury", "Venus", "Mars"}
     }
 
+    # ── 7. Save to History (With Technical Snapshot) ──────────────────
+    reading_id = None
+    try:
+        if db:
+            uid = request.user["uid"]
+            astrology_snapshot = {
+                "natal_chart": natal_response,
+                "transit_chart": transit_response,
+                "aspects": active_aspects[:10]
+            }
+
+            _, reading_ref = db.collection("users").document(uid).collection("readings").add({
+                "timestamp": firestore.SERVER_TIMESTAMP,
+                "interpretation": interpretation,
+                "astrology_snapshot": astrology_snapshot
+            })
+            reading_id = reading_ref.id
+            print(f"  ✓ Reading saved with snapshot for UID: {uid}, ID: {reading_id}")
+    except Exception as db_err:
+        print(f"  ⚠ Failed to save history: {db_err}")
+
     return jsonify({
         "status":          "success",
+        "reading_id":      reading_id,
         "server_date_utc": today_str,
         "birth_data": {
             "year": year, "month": month, "day": day,
