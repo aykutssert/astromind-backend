@@ -1010,7 +1010,10 @@ def get_birth_chart():
     }
 
     # ── 7. Save to History (With Technical Snapshot) ──────────────────
-    reading_id = None
+    # Use the current UTC date as the document ID to prevent duplicates for the same day
+    date_id = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    reading_id = date_id
+    
     try:
         if db:
             uid = request.user["uid"]
@@ -1020,13 +1023,14 @@ def get_birth_chart():
                 "aspects": active_aspects[:10]
             }
 
-            _, reading_ref = db.collection("users").document(uid).collection("readings").add({
+            # Use .document(date_id).set() to overwrite/ensure only one reading per day
+            db.collection("users").document(uid).collection("readings").document(date_id).set({
                 "timestamp": firestore.SERVER_TIMESTAMP,
                 "interpretation": interpretation,
-                "astrology_snapshot": astrology_snapshot
+                "astrology_snapshot": astrology_snapshot,
+                "date_id": date_id
             })
-            reading_id = reading_ref.id
-            print(f"  ✓ Reading saved with snapshot for UID: {uid}, ID: {reading_id}")
+            print(f"  ✓ Reading saved/updated for UID: {uid} with ID: {date_id}")
     except Exception as db_err:
         print(f"  ⚠ Failed to save history: {db_err}")
 
