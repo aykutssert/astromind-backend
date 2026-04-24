@@ -31,39 +31,52 @@ GEMINI_MODEL = "gemini-3.1-flash-lite-preview"
 # ─────────────────────────────────────────────
 
 SYSTEM_PROMPT = """
-You are **Astra**, a hyper-minimalist AI astrology guide. Your goal is to give the user their 'daily vibe' in under 10 seconds of reading. No fluff. No jargon. No "The stars say." 
+You are **Astra**, an AI astrology guide. Analyze the astrological data and provide daily insights in JSON format.
 
 ---
 
 ## OUTPUT FORMAT (MANDATORY)
-Respond exclusively in **English**. Use Markdown. Be extremely brief.
+Respond exclusively in **JSON format**. No markdown, no extra text.
 
-### ✨ Today's Vibe
-2 short sentences. Tell them exactly how they feel. Address them by name naturally if possible.
-Example: "Hey Aykut, you have massive energy today but zero patience. Don't let a small annoyance ruin your flow."
+{
+  "summary": "2-3 sentence general daily vibe",
+  "highlights": [
+    {
+      "tag": "health",
+      "status": "positive|neutral|negative",
+      "score": 0-100,
+      "title": "short title",
+      "description": "1-2 sentence explanation",
+      "action": "specific action the user should take for this category"
+    }
+  ],
+  "suggestions": ["action 1", "action 2", "action 3"]
+}
 
-### 🌙 Emotional State
-2 short sentences. Focus on their inner mood.
-Example: "You're feeling extra sensitive and need some space. It's a good day to stay in."
-
-### ⚡ Quick Advice
-Write **3 ultra-short bullets** (max 5 words each).
-Example: 
-- Go work out.
-- Avoid difficult conversations.
-- Order your favorite food.
-
-### 🔮 Mantra
-A 5-word mantra.
-Example: "Focus on your own path."
+**Tags (all 6 required):**
+- health
+- love
+- career
+- money
+- beauty
+- mind
 
 ---
 
-## STRICT RULES
-1. **Zero Jargon:** Do NOT mention planet names (Mars, Venus, etc.) or aspects (Square, Trine) in the text.
-2. **No Intro/Outro:** Start immediately with the headers.
-3. **Be Human:** Speak like a person, not a textbook.
-4. **Target Length:** Under **80 words** total.
+## SCORING RULES
+- **Score 0-100** based on planetary strength and aspects for each category
+- **Status:** score > 70 = positive, score < 30 = negative, else neutral
+- Use astrological data to determine scores (Venus for beauty/love, Mars for career, etc.)
+- All 6 tags must be present every day
+- Even low influence days should have a score (e.g., 30-50 for quiet days)
+
+---
+
+## CONTENT RULES
+1. **No Jargon:** Don't mention planet names or aspect names in descriptions
+2. **Be Human:** Speak naturally, not like a textbook
+3. **Brief:** Keep descriptions 1-2 sentences
+4. **Personal:** Address user by name if available
 """
 
 # ─────────────────────────────────────────────
@@ -376,7 +389,9 @@ def assign_house(planet_longitude: float, cusps: list) -> int:
     return 12
 
 
-def get_dignity(planet_name: str, sign_index: int) -> str | None:
+from typing import Optional
+
+def get_dignity(planet_name: str, sign_index: int) -> Optional[str]:
     """Return dignity string or None."""
     table = DIGNITY_TABLE.get(planet_name)
     if not table:
@@ -944,15 +959,16 @@ def get_birth_chart():
         user_name=user_name, time_accuracy=time_accuracy
     )
 
-    # DEBUG: Save outgoing prompt to a unique folder
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    request_folder = os.path.join("debug_logs", f"request_{timestamp}")
-    os.makedirs(request_folder, exist_ok=True)
+    # DEBUG: Save outgoing prompt to a unique folder (disabled in production)
+    if os.environ.get("DEBUG_MODE") == "true":
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        request_folder = os.path.join("debug_logs", f"request_{timestamp}")
+        os.makedirs(request_folder, exist_ok=True)
 
-    with open(os.path.join(request_folder, "prompt.md"), "w") as f:
-        f.write("# OUTGOING PROMPT (HIGH PRECISION MODE)\n\n")
-        f.write(f"## System Instruction\n{SYSTEM_PROMPT}\n\n")
-        f.write(f"## User Content\n{user_content}")
+        with open(os.path.join(request_folder, "prompt.md"), "w") as f:
+            f.write("# OUTGOING PROMPT\n\n")
+            f.write(f"## System Instruction\n{SYSTEM_PROMPT}\n\n")
+            f.write(f"## User Content\n{user_content}")
 
     try:
         print("Requesting interpretation from Gemini...")
@@ -966,10 +982,42 @@ def get_birth_chart():
         )
         interpretation = response.text
 
-        # DEBUG: Save incoming response inside the same folder
-        with open(os.path.join(request_folder, "response.md"), "w") as f:
-            f.write("# INCOMING RESPONSE (HIGH PRECISION MODE)\n\n")
-            f.write(interpretation)
+        # DEBUG: Save incoming response inside the same folder (disabled in production)
+        if os.environ.get("DEBUG_MODE") == "true":
+            with open(os.path.join(request_folder, "response.md"), "w") as f:
+                f.write(interpretation)
+
+        # Parse JSON response
+        try:
+            import json
+            interpretation_json = json.loads(interpretation)
+            
+            # Validate required fields
+            required_fields = ["summary", "highlights", "suggestions"]
+            for field in required_fields:
+                if field not in interpretation_json:
+                    raise ValueError(f"Missing required field: {field}")
+            
+            # Validate highlights
+            if not isinstance(interpretation_json["highlights"], list):
+                raise ValueError("highlights must be a list")
+            
+            required_tags = {"health", "love", "career", "money", "beauty", "mind"}
+            found_tags = {h["tag"] for h in interpretation_json["highlights"]}
+            if not required_tags.issubset(found_tags):
+                missing = required_tags - found_tags
+                raise ValueError(f"Missing tags: {missing}")
+            
+            interpretation = interpretation_json
+            print("  ✓ JSON parsed and validated successfully")
+            
+        except json.JSONDecodeError as e:
+            print(f"[JSON Parse Error] {e}")
+            return jsonify({"status": "error", "message": "AI response is not valid JSON"}), 502
+        except ValueError as e:
+            print(f"[JSON Validation Error] {e}")
+            return jsonify({"status": "error", "message": f"Invalid JSON structure: {e}"}), 502
+            
     except Exception as e:
         print(f"[Gemini Error] {e}")
         return jsonify({"status": "error", "message": "AI interpretation failed."}), 502
