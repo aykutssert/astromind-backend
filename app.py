@@ -79,6 +79,12 @@ Respond exclusively in **JSON format**. No markdown, no extra text.
 4. **Personal:** Address user by name if available
 """
 
+CHAT_SYSTEM_PROMPT = """
+You are **Astra**, an AI astrology guide. Answer the user's follow-up question in text format.
+Be brief, warm, and personal. Address the user by name if available.
+Use the technical data to back up your answer, but speak naturally, not like a textbook.
+"""
+
 # ─────────────────────────────────────────────
 # Auth & Rate Limiting
 # ─────────────────────────────────────────────
@@ -767,7 +773,7 @@ Astra, please answer the user's question directly, briefly, and warmly. Use the 
             model=GEMINI_MODEL,
             contents=chat_prompt,
             config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT, # Keep her persona
+                system_instruction=CHAT_SYSTEM_PROMPT,
                 max_output_tokens=512,
             ),
         )
@@ -793,6 +799,43 @@ Astra, please answer the user's question directly, briefly, and warmly. Use the 
 
     except Exception as e:
         print(f"[Ask Astra Error] {e}")
+        return jsonify({"status": "error", "message": str(e)}), 500
+
+
+@app.route("/history", methods=["GET"])
+@require_auth
+def get_history():
+    """
+    Get user's reading history.
+    Query params: limit (default 30)
+    """
+    if not db:
+        return jsonify({"status": "error", "message": "Database not initialized"}), 500
+
+    uid = request.user["uid"]
+    limit = int(request.args.get("limit", 30))
+
+    try:
+        readings_ref = db.collection("users").document(uid).collection("readings")
+        # Order by timestamp descending, limit results
+        readings = readings_ref.order_by("timestamp", direction="DESCENDING").limit(limit).get()
+
+        history = []
+        for doc in readings:
+            data = doc.to_dict()
+            history.append({
+                "date_id": doc.id,
+                "timestamp": data.get("timestamp"),
+                "interpretation": data.get("interpretation"),
+            })
+
+        return jsonify({
+            "status": "success",
+            "history": history,
+        })
+
+    except Exception as e:
+        print(f"[History Error] {e}")
         return jsonify({"status": "error", "message": str(e)}), 500
 
 
@@ -1057,11 +1100,11 @@ def get_birth_chart():
         if name in {"Sun", "Moon", "Mercury", "Venus", "Mars"}
     }
 
-    # ── 7. Save to History (With Technical Snapshot) ──────────────────
+    # ── 7. Save to History ───────────────────────────────────────────────
     # Use the current UTC date as the document ID to prevent duplicates for the same day
     date_id = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     reading_id = date_id
-    
+
     try:
         if db:
             uid = request.user["uid"]
